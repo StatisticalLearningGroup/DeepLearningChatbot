@@ -28,12 +28,12 @@ def get_stripped_data(filename):
             data.append(line.split(" ")[FIRST_DATA_COL:])
     return data
 
+
 def prepare_data(stripped_data):
     word_dict = {}
     freq = {}
     maxlen = 0
     data = []
-
 
     #fill data list and dictionary
     for line in stripped_data:
@@ -52,15 +52,17 @@ def prepare_data(stripped_data):
     unk_words = []
     for word in word_dict:
         if freq[word] < FREQ_CUTOFF:
-            unk_words.append(word_dict[word])
+            unk_words.append([word, word_dict[word]])
 
     word_dict.update(RESERVED)
 
     #add reserved tokens to data (e.g. EOS, GO, PAD, UNK)
     for j in range(len(data)):
         for i in range(len(data[j])):
-            if data[j][i] in unk_words:
-                data[j][i] = word_dict[UNK]
+            for word in unk_words:
+                if data[j][i] == word[1]:
+                    data[j][i] = word_dict[UNK]
+
         '''
         c=0
         while len(data[j]) > BUCKETS[c][0]:
@@ -74,7 +76,7 @@ def prepare_data(stripped_data):
 
     #remove unknown words from dict:
     for word in unk_words:
-        del word_dict[word]
+        del word_dict[word[0]]
 
     return data, word_dict, maxlen
 
@@ -96,7 +98,7 @@ def get_mr_pairs(data, word_dict, maxlen):
     return np.array(MR_pairs)
 
 
-DATA_CUTOFF = 1000
+DATA_CUTOFF = 10000
 
 stripped_data = get_stripped_data(RAW_DATA_FILE)[:DATA_CUTOFF]
 data, word_dict, maxlen = prepare_data(stripped_data)
