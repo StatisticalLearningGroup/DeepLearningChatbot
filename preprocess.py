@@ -10,6 +10,7 @@ UNK = "<UNK>"
 RESERVED = {PAD: 0, EOS: 1, GO: 2, UNK: 3}
 
 FREQ_CUTOFF = 3
+LENGTH_CUTOFF = 20
 
 RAW_DATA_FILE = "movie_lines.txt"
 FIRST_DATA_COL = 8
@@ -25,7 +26,9 @@ def get_stripped_data(filename):
     data = []
     with codecs.open(filename, "r", encoding='utf-8', errors='ignore') as infile:
         for line in infile:
-            data.append(line.split(" ")[FIRST_DATA_COL:])
+            linedat = line.split(" ")[FIRST_DATA_COL:]
+            if len(linedat <= LENGTH_CUTOFF):
+                data.append(linedat)
     return data
 
 
@@ -63,14 +66,7 @@ def prepare_data(stripped_data):
                 if data[j][i] == word[1]:
                     data[j][i] = word_dict[UNK]
 
-        '''
-        c=0
-        while len(data[j]) > BUCKETS[c][0]:
-            if c >= len(BUCKETS):
-                raise Exception("Buckets too small.")
-            c += 1
-        b = max(BUCKETS[c][0] - len(data[j]), 0)
-        '''
+
         b = max(maxlen - len(data[j]), 0)
         data[j] = [word_dict[GO]] + data[j] + [word_dict[PAD]]*b + [word_dict[EOS]]
 
