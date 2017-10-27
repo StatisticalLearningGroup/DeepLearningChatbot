@@ -6,8 +6,9 @@ PAD = "<PAD>"
 EOS = "<EOS"
 GO = "<GO>"
 UNK = "<UNK>"
+RMVD = "<RMVD>"
 
-RESERVED = {PAD: 0, EOS: 1, GO: 2, UNK: 3}
+RESERVED = {PAD: 0, EOS: 1, GO: 2, UNK: 3, RMVD: 4}
 
 FREQ_CUTOFF = 3
 LENGTH_CUTOFF = 20
@@ -29,6 +30,9 @@ def get_stripped_data(filename):
             linedat = line.split(" ")[FIRST_DATA_COL:]
             if len(linedat <= LENGTH_CUTOFF):
                 data.append(linedat)
+            else:
+                data.append([RMVD])
+
     return data
 
 
@@ -45,7 +49,7 @@ def prepare_data(stripped_data):
             if word in word_dict:
                 freq[word] += 1
             else:
-                word_dict[word] = len(word_dict) + 3
+                word_dict[word] = len(word_dict) + (len(RESERVED) - 1)
                 freq[word] = 1
             msg.append(word_dict[word])
         data.append(msg)
@@ -84,12 +88,15 @@ def get_mr_pairs(data, word_dict, maxlen):
     msg = None
 
     for line in data:
-        rep = []
-        for word in line:
-            rep.append(one_hot_encode(word, dim))
-        if msg != None:
-            MR_pairs.append([msg, rep])
-        msg = rep
+        if not line.contains(RMVD):
+            rep = []
+            for word in line:
+                rep.append(one_hot_encode(word, dim))
+            if msg != None:
+                MR_pairs.append([msg, rep])
+            msg = rep
+        else:
+            msg = None
 
     return np.array(MR_pairs)
 
