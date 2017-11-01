@@ -7,6 +7,14 @@ import string
 import re
 import random
 import codecs
+import sys
+import argparse
+import pickle
+import zlib
+import zipfile
+import tarfile
+import datetime
+import os
 
 import torch
 import torch.nn as nn
@@ -26,12 +34,25 @@ FIRST_DATA_COL = 8
 
 UNK_THRESH = 3
 
+ENC_FILE = "enc.pt"
+DEC_FILE = "dec.pt"
+I2W_FILE = "i2w.dict"
+W2I_FILE = "w2i.dict"
+INF_FILE = "info.dat"
+
+DATA_DIR = "/Current_Model/"
+
 class Corpus:
     def __init__(self):
         self.word2index = {"UNK": UNK_token}
         self.word2count = {}
         self.index2word = {SOS_token: "SOS", EOS_token: "EOS", UNK_token: "UNK", RMVD_token: "RMVD"}
         self.n_words = 2  # Count SOS and EOS
+
+    def insert_data(self, w2i, i2w, n_w):
+        self.word2index = w2i
+        self.index2word = i2w
+        self.n_words = n_w
 
     def addSentence(self, sentence):
         for word in sentence:
@@ -91,7 +112,6 @@ def readData(datafile, max_n=-1):
 
     # Split every line into lines and normalize
     lines = [normalizeString(l).split(" ")[FIRST_DATA_COL:] for l in lines]
-
 
     corpus = Corpus()
 
@@ -156,7 +176,7 @@ def prepareData(datafile, max_n=-1):
     return corpus, lines
 
 
-corpus, lines = prepareData("movie_lines.txt", max_n=100000)
+
 
 
 ######################################################################
@@ -462,7 +482,7 @@ def timeSince(since, percent):
 # of examples, time so far, estimated time) and average loss.
 #
 
-def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, learning_rate=0.01):
+def trainIters(corpus, lines, encoder, decoder, n_iters, print_every=1000, plot_every=100, learning_rate=0.01):
     start = time.time()
     plot_losses = []
     print_loss_total = 0  # Reset every print_every
@@ -549,9 +569,8 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
 
     return decoded_words
 
-
-
 def converse(encoder, decoder, max_length = MAX_LENGTH):
+    print("Enter your message:")
     end = False
     while not end:
         msg = input()
@@ -562,17 +581,109 @@ def converse(encoder, decoder, max_length = MAX_LENGTH):
             resp = evaluate(encoder, decoder, msg)
             print(resp)
 
+def init_parser():
+    parser = argparse.ArgumentParser(description='Sequence to sequence chatbot model.')
+    parser.add_argument('-f', dest='datafile', action='store', default="movie_lines.txt")
+    parser.add_argument('-m', dest='maxlines', action='store', default = 100000)
+    parser.add_argument('--import', dest='model_file', action='store', default="")
 
-hidden_size = 256
-encoder1 = EncoderRNN(corpus.n_words, hidden_size)
-decoder1 = DecoderRNN(hidden_size, corpus.n_words)
+    args = parser.parse_args()
+    return args.datafile, args.maxlines, args.model_file
 
-if use_cuda:
-    encoder1 = encoder1.cuda()
-    decoder1 = decoder1.cuda()
+def run_model(datafile, iters=100000):
+    hidden_size = 256
+    corpus, lines = prepareData(datafile, max_n=iters)
 
-trainIters(encoder1, decoder1, 100000, print_every=5000)
+    encoder1 = EncoderRNN(corpus.n_words, hidden_size)
+    decoder1 = DecoderRNN(hidden_size, corpus.n_words)
+    if use_cuda:
+        encoder1 = encoder1.cuda()
+        decoder1 = decoder1.cuda()
+    trainIters(corpus, lines, encoder1, decoder1, iters, print_every=5000)
 
-torch.save(encoder1.state_dict(), "enc_1.pt")
-torch.save(decoder1.state_dict(), "dec_1.pt")
+    save_model(encoder1, decoder1, corpus)
+
+def save_model(encoder, decoder, corpus, out_path=""):
+    print("Saving models.")
+
+    enc_out = out_path+ENC_FILE
+    dec_out = out_path+DEC_FILE
+    i2w_out = out_path+I2W_FILE
+    w2i_out = out_path+W2I_FILE
+    inf_out = out_path+INF_FILE
+
+    torch.save(encoder.state_dict(), enc_out)
+    torch.save(decoder.state_dict(), dec_out)
+
+    i2w = open(i2w_out, 'wb')
+    pickle.dump(corpus.index2word, i2w)
+    i2w.close()
+    w2i = open(w2i_out, 'wb')
+    pickle.dump(corpus.word2index, w2i)
+    w2i.close()
+
+    info = open(inf_out, 'w')
+    info.write(str(encoder.hidden_size)+"\n"+str(encoder.n_layers)+"\n"+str(decoder.n_layers)+"\n"+str(corpus.n_words))
+    info.close()
+
+    print("Compressing models")
+    t = datetime.datetime.now()
+    timestamp = str(t.day) + "_" + str(t.hour) + "_" + str(t.minute)
+    tf = tarfile.open(out_path +"s2s_" + timestamp + ".tar", mode='w')
+    tf.add(enc_out)
+    tf.add(dec_out)
+    tf.add(i2w_out)
+    tf.add(w2i_out)
+    tf.add(inf_out)
+    tf.close()
+
+    print("Finished saving models.")
+
+def load_model(model_file):
+    print("Loading models.")
+    cwd = os.getcwd()
+    tf = tarfile.open(model_file)
+    tf.extractall(path=cwd+DATA_DIR)
+    info = open(cwd+DATA_DIR+INF_FILE, 'r')
+    hidden_size, e_layers, d_layers, n_words = [int(i) for i in info.readlines()]
+
+    i2w = open(cwd+DATA_DIR+I2W_FILE, 'rb')
+    w2i = open(cwd+DATA_DIR+W2I_FILE, 'rb')
+    corpus = Corpus()
+    i2w_dict = pickle.load(i2w)
+    w2i_dict = pickle.load(w2i)
+    corpus.insert_data(i2w_dict, w2i_dict, n_words)
+    w2i.close()
+    i2w.close()
+
+    encoder1 = EncoderRNN(corpus.n_words, hidden_size)
+    decoder1 = DecoderRNN(hidden_size, corpus.n_words)
+    encoder1.load_state_dict(torch.load(cwd+DATA_DIR+ENC_FILE))
+    decoder1.load_state_dict(torch.load(cwd+DATA_DIR+DEC_FILE))
+    encoder1.eval()
+    decoder1.eval()
+
+    tf.close()
+
+    if use_cuda:
+        encoder1 = encoder1.cuda()
+        decoder1 = decoder1.cuda()
+
+    print("Loaded models.")
+
+    return encoder1, decoder1, corpus
+
+
+
+if __name__ == '__main__':
+    datafile, maxlines, model_file = init_parser()
+
+    if model_file == "":
+        run_model(datafile, iters=int(maxlines))
+    else:
+        encoder1, decoder1, corpus = load_model(model_file)
+        converse(encoder1, decoder1)
+
+
+
 
