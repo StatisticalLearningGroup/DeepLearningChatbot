@@ -585,14 +585,15 @@ def init_parser():
     parser = argparse.ArgumentParser(description='Sequence to sequence chatbot model.')
     parser.add_argument('-f', dest='datafile', action='store', default="movie_lines.txt")
     parser.add_argument('-m', dest='maxlines', action='store', default = 100000)
+    parser.add_argument('-i', dest='iters', action='store', default=100000)
+    parser.add_argument('-hs', dest='hidden_size', action='store', default=256)
     parser.add_argument('--import', dest='model_file', action='store', default="")
 
     args = parser.parse_args()
-    return args.datafile, args.maxlines, args.model_file
+    return args.datafile, args.maxlines, args.iters, args.hidden_size, args.model_file
 
-def run_model(datafile, iters=100000):
-    hidden_size = 256
-    corpus, lines = prepareData(datafile, max_n=iters)
+def run_model(datafile, hidden_size = 256, iters=100000, max_n = 100000):
+    corpus, lines = prepareData(datafile, max_n=max_n)
 
     encoder1 = EncoderRNN(corpus.n_words, hidden_size)
     decoder1 = DecoderRNN(hidden_size, corpus.n_words)
@@ -676,10 +677,10 @@ def load_model(model_file):
 
 
 if __name__ == '__main__':
-    datafile, maxlines, model_file = init_parser()
+    datafile, maxlines, iters, hidden_size, model_file = init_parser()
 
     if model_file == "":
-        run_model(datafile, iters=int(maxlines))
+        run_model(datafile, hidden_size=int(hidden_size), iters=int(iters), max_n=int(maxlines))
     else:
         encoder1, decoder1, corpus = load_model(model_file)
         converse(encoder1, decoder1)
