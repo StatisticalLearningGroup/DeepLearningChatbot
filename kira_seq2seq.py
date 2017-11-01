@@ -156,7 +156,7 @@ def prepareData(datafile, max_n=-1):
     return corpus, lines
 
 
-corpus, lines = prepareData("movie_lines.txt", max_n=50000)
+corpus, lines = prepareData("movie_lines.txt", max_n=100000)
 
 
 ######################################################################
@@ -208,6 +208,8 @@ corpus, lines = prepareData("movie_lines.txt", max_n=50000)
 #    :alt:
 #
 #
+
+
 
 class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_size, n_layers=1):
@@ -469,11 +471,12 @@ def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, lear
     encoder_optimizer = optim.SGD(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.SGD(decoder.parameters(), lr=learning_rate)
     training_pairs = getTrainingPairs(corpus, lines)
+    n = len(training_pairs)
     criterion = nn.NLLLoss()
 
     print("Beginning training.")
     for iter in range(1, n_iters + 1):
-        training_pair = training_pairs[iter - 1]
+        training_pair = training_pairs[(iter - 1) % n]
         input_variable = training_pair[0]
         target_variable = training_pair[1]
 
@@ -493,16 +496,9 @@ def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, lear
             plot_losses.append(plot_loss_avg)
             plot_loss_total = 0
 
-    showPlot(plot_losses)
+    #showPlot(plot_losses)
 
 
-######################################################################
-# Plotting results
-# ----------------
-#
-# Plotting is done with matplotlib, using the array of loss values
-# ``plot_losses`` saved while training.
-#
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -517,17 +513,6 @@ def showPlot(points):
     ax.yaxis.set_major_locator(loc)
     plt.plot(points)
 
-
-######################################################################
-# Evaluation
-# ==========
-#
-# Evaluation is mostly the same as training, but there are no targets so
-# we simply feed the decoder's predictions back to itself for each step.
-# Every time it predicts a word we add it to the output string, and if it
-# predicts the EOS token we stop there. We also store the decoder's
-# attention outputs for display later.
-#
 
 def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
     input_variable = variableFromSentence(corpus, sentence)
@@ -550,7 +535,7 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
 
     for di in range(max_length):
         decoder_output, decoder_hidden = decoder(
-            decoder_input, decoder_hidden, encoder_output, encoder_outputs)
+            decoder_input, decoder_hidden)
         topv, topi = decoder_output.data.topk(1)
         ni = topi[0][0]
         if ni == EOS_token:
@@ -565,40 +550,18 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
     return decoded_words
 
 
-######################################################################
-# We can evaluate random sentences from the training set and print out the
-# input, target, and output to make some subjective quality judgements:
-#
 
-def evaluateRandomly(encoder, decoder, n=10):
-    for i in range(n):
-        line = random.choice(lines)
-        print('>', line[0])
-        print('=', line[1])
-        output_words, attentions = evaluate(encoder, decoder, line[0])
-        output_sentence = ' '.join(output_words)
-        print('<', output_sentence)
-        print('')
+def converse(encoder, decoder, max_length = MAX_LENGTH):
+    end = False
+    while not end:
+        msg = input()
+        if "exit" in msg:
+            end=True
+        else:
+            msg = normalizeString(msg).split(" ")
+            resp = evaluate(encoder, decoder, msg)
+            print(resp)
 
-
-######################################################################
-# Training and Evaluating
-# =======================
-#
-# With all these helper functions in place (it looks like extra work, but
-# it's easier to run multiple experiments easier) we can actually
-# initialize a network and start training.
-#
-# Remember that the input sentences were heavily filtered. For this small
-# dataset we can use relatively small networks of 256 hidden nodes and a
-# single GRU layer. After about 40 minutes on a MacBook CPU we'll get some
-# reasonable results.
-#
-# .. Note::
-#    If you run this notebook you can train, interrupt the kernel,
-#    evaluate, and continue training later. Comment out the lines where the
-#    encoder and decoder are initialized and run ``trainIters`` again.
-#
 
 hidden_size = 256
 encoder1 = EncoderRNN(corpus.n_words, hidden_size)
@@ -608,31 +571,8 @@ if use_cuda:
     encoder1 = encoder1.cuda()
     decoder1 = decoder1.cuda()
 
-trainIters(encoder1, decoder1, 50000, print_every=5000)
+trainIters(encoder1, decoder1, 100000, print_every=5000)
 
 torch.save(encoder1.state_dict(), "enc_1.pt")
 torch.save(decoder1.state_dict(), "dec_1.pt")
 
-######################################################################
-# Exercises
-# =========
-#
-# -  Try with a different dataset
-#
-#    -  Another language line
-#    -  Human → Machine (e.g. IOT commands)
-#    -  Chat → Response
-#    -  Question → Answer
-#
-# -  Replace the embeddings with pre-trained word embeddings such as word2vec or
-#    GloVe
-# -  Try with more layers, more hidden units, and more sentences. Compare
-#    the training time and results.
-# -  If you use a translation file where lines have two of the same phrase
-#    (``I am test \t I am test``), you can use this as an autoencoder. Try
-#    this:
-#
-#    -  Train as an autoencoder
-#    -  Save only the Encoder network
-#    -  Train a new Decoder for translation from there
-#
