@@ -3,18 +3,16 @@
 from __future__ import unicode_literals, print_function, division
 from io import open
 import unicodedata
-import string
 import re
 import random
 import codecs
-import sys
 import argparse
 import pickle
-import zlib
-import zipfile
 import tarfile
 import datetime
 import os
+import time
+import math
 
 import torch
 import torch.nn as nn
@@ -30,6 +28,8 @@ EOS_token = 1
 UNK_token = 2
 RMVD_token = 3
 
+MAX_LENGTH = 20
+
 FIRST_DATA_COL = 8
 
 UNK_THRESH = 3
@@ -40,7 +40,9 @@ I2W_FILE = "i2w.dict"
 W2I_FILE = "w2i.dict"
 INF_FILE = "info.dat"
 
-DATA_DIR = "/Current_Model/"
+DATA_DIR = "Current_Model/"
+
+#dictionary class - sorry, I know I'm misusing the word Corpus but I only realized that now and dont want to refactor it
 
 class Corpus:
     def __init__(self):
@@ -93,12 +95,7 @@ def normalizeString(s):
     return s
 
 
-######################################################################
-# To read the data file we will split the file into lines, and then split
-# lines into lines. The files are all English → Other Language, so if we
-# want to translate from Other Language → English I added the ``reverse``
-# flag to reverse the lines.
-#
+#read the data, store the lines in a list, remove overly long messages and strip out unnecessary characters (like punctuation)
 
 def readData(datafile, max_n=-1):
     print("Reading lines...")
@@ -127,7 +124,6 @@ def readData(datafile, max_n=-1):
 # earlier).
 #
 
-MAX_LENGTH = 20
 
 
 
@@ -157,7 +153,7 @@ def prepareData(datafile, max_n=-1):
     print("Counted words:")
     print(corpus.n_words)
 
-    print("Tokenizing...")
+    print("Removing infrequent words...")
     unks = []
     rm_count=0
     for word, count in corpus.word2count.items():
@@ -166,7 +162,7 @@ def prepareData(datafile, max_n=-1):
     print(len(unks), "words removed from dictionary.")
     for i in range(len(lines)):
         if i % 5000 == 0:
-            print("Line", i, "tokenized.")
+            print("Line", i, "parsed.")
         for j in range(len(lines[i])):
             if lines[i][j] in unks:
                 lines[i][j] = "UNK"
@@ -452,8 +448,7 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
 # remaining given the current time and progress %.
 #
 
-import time
-import math
+
 
 
 def asMinutes(s):
@@ -534,7 +529,7 @@ def showPlot(points):
     plt.plot(points)
 
 
-def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
+def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_LENGTH):
     input_variable = variableFromSentence(corpus, sentence)
     input_length = input_variable.size()[0]
     encoder_hidden = encoder.initHidden()
@@ -569,7 +564,7 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
 
     return decoded_words
 
-def converse(encoder, decoder, max_length = MAX_LENGTH):
+def converse(encoder, decoder, corpus, max_length = MAX_LENGTH):
     print("Enter your message:")
     end = False
     while not end:
@@ -581,6 +576,7 @@ def converse(encoder, decoder, max_length = MAX_LENGTH):
             resp = evaluate(encoder, decoder, msg)
             print(resp)
 
+#read command line input and arguments
 def init_parser():
     parser = argparse.ArgumentParser(description='Sequence to sequence chatbot model.')
     parser.add_argument('-f', dest='datafile', action='store', default="movie_lines.txt")
@@ -592,6 +588,7 @@ def init_parser():
     args = parser.parse_args()
     return args.datafile, args.maxlines, args.iters, args.hidden_size, args.model_file
 
+#run the model with given parameters
 def run_model(datafile, hidden_size = 256, iters=100000, max_n = 100000):
     corpus, lines = prepareData(datafile, max_n=max_n)
 
@@ -604,8 +601,12 @@ def run_model(datafile, hidden_size = 256, iters=100000, max_n = 100000):
 
     save_model(encoder1, decoder1, corpus)
 
+
+#save/load the model to/from a tar file
 def save_model(encoder, decoder, corpus, out_path=""):
     print("Saving models.")
+
+    cwd = os.getcwd() + '/'
 
     enc_out = out_path+ENC_FILE
     dec_out = out_path+DEC_FILE
@@ -630,7 +631,7 @@ def save_model(encoder, decoder, corpus, out_path=""):
     print("Compressing models")
     t = datetime.datetime.now()
     timestamp = str(t.day) + "_" + str(t.hour) + "_" + str(t.minute)
-    tf = tarfile.open(out_path +"s2s_" + timestamp + ".tar", mode='w')
+    tf = tarfile.open(cwd+out_path +"s2s_" + timestamp + ".tar", mode='w')
     tf.add(enc_out)
     tf.add(dec_out)
     tf.add(i2w_out)
@@ -638,13 +639,19 @@ def save_model(encoder, decoder, corpus, out_path=""):
     tf.add(inf_out)
     tf.close()
 
+    os.remove(enc_out)
+    os.remove(dec_out)
+    os.remove(i2w_out)
+    os.remove(w2i_out)
+    os.remove(inf_out)
+
     print("Finished saving models.")
 
 def load_model(model_file):
     print("Loading models.")
-    cwd = os.getcwd()
+    cwd = os.getcwd()+'/'
     tf = tarfile.open(model_file)
-    tf.extractall(path=cwd+DATA_DIR)
+    tf.extractall(path=DATA_DIR)
     info = open(cwd+DATA_DIR+INF_FILE, 'r')
     hidden_size, e_layers, d_layers, n_words = [int(i) for i in info.readlines()]
 
@@ -674,7 +681,9 @@ def load_model(model_file):
 
     return encoder1, decoder1, corpus
 
-
+encoder1 = None
+decoder1 = None
+corpus = None
 
 if __name__ == '__main__':
     datafile, maxlines, iters, hidden_size, model_file = init_parser()
@@ -683,7 +692,7 @@ if __name__ == '__main__':
         run_model(datafile, hidden_size=int(hidden_size), iters=int(iters), max_n=int(maxlines))
     else:
         encoder1, decoder1, corpus = load_model(model_file)
-        converse(encoder1, decoder1)
+        converse(encoder1, decoder1, corpus)
 
 
 
