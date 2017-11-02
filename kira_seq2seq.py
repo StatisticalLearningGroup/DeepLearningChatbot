@@ -319,12 +319,12 @@ class DecoderRNN(nn.Module):
 # EOS token to both sequences.
 #
 
-def indexesFromSentence(lang, sentence):
-    return [lang.word2index[word] for word in sentence]
+def indexesFromSentence(corpus, sentence):
+    return [corpus.word2index[word] for word in sentence]
 
 
-def variableFromSentence(lang, sentence):
-    indexes = indexesFromSentence(lang, sentence)
+def variableFromSentence(corpus, sentence):
+    indexes = indexesFromSentence(corpus, sentence)
     indexes.append(EOS_token)
     result = Variable(torch.LongTensor(indexes).view(-1, 1))
     if use_cuda:
@@ -573,7 +573,7 @@ def converse(encoder, decoder, corpus, max_length = MAX_LENGTH):
             end=True
         else:
             msg = normalizeString(msg).split(" ")
-            resp = evaluate(encoder, decoder, msg)
+            resp = evaluate(encoder, decoder, corpus , msg)
             print(resp)
 
 #read command line input and arguments
@@ -660,7 +660,7 @@ def load_model(model_file):
     corpus = Corpus()
     i2w_dict = pickle.load(i2w)
     w2i_dict = pickle.load(w2i)
-    corpus.insert_data(i2w_dict, w2i_dict, n_words)
+    corpus.insert_data(w2i_dict, i2w_dict, n_words)
     w2i.close()
     i2w.close()
 
@@ -692,7 +692,7 @@ if __name__ == '__main__':
         run_model(datafile, hidden_size=int(hidden_size), iters=int(iters), max_n=int(maxlines))
     else:
         encoder1, decoder1, corpus = load_model(model_file)
-        converse(encoder1, decoder1, corpus)
+        #converse(encoder1, decoder1, corpus)
 
 
 
