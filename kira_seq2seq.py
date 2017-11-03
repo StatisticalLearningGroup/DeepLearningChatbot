@@ -31,11 +31,15 @@ SOS_INDEX = 0
 EOS_INDEX = 1
 UNK_INDEX = 2
 RMVD_INDEX = 3
+PAD_INDEX = 4
 
 UNK = "UNK"
 RMVD = "RMVD"
 EOS = "EOS"
-SOS="SOS"
+SOS = "SOS"
+PAD = "PAD"
+
+RESERVED = {SOS_INDEX: SOS, EOS_INDEX: EOS, UNK_INDEX: UNK, RMVD_INDEX: RMVD, PAD_INDEX: PAD}
 
 MAX_LENGTH = 10
 
@@ -56,10 +60,12 @@ DATA_DIR = "Current_Model/"
 
 class Corpus:
     def __init__(self):
-        self.word2index = {UNK: UNK_INDEX}
+        self.word2index = {}
         self.word2count = {}
-        self.index2word = {SOS_INDEX: SOS, EOS_INDEX: EOS, UNK_INDEX: UNK, RMVD_INDEX: RMVD}
-        self.n_words = 2  # Count SOS and EOS
+        self.index2word = {}
+        self.word2index.update(RESERVED)
+        self.index2word.update(RESERVED)
+        self.n_words = len(RESERVED)
 
     def insert_data(self, w2i, i2w, n_w):
         self.word2index = w2i
@@ -80,11 +86,6 @@ class Corpus:
             self.word2count[word] += 1
 
 
-######################################################################
-# The files are all in Unicode, to simplify we will turn Unicode
-# characters to ASCII, make everything lowercase, and trim most
-# punctuation.
-#
 
 # Turn a Unicode string to plain ASCII, thanks to
 # http://stackoverflow.com/a/518232/2809427
@@ -125,14 +126,6 @@ def readData(datafile, max_n=-1):
     return corpus, lines
 
 
-######################################################################
-# Since there are a *lot* of example sentences and we want to train
-# something quickly, we'll trim the data set to only relatively short and
-# simple sentences. Here the maximum length is 10 words (that includes
-# ending punctuation) and we're filtering to sentences that translate to
-# the form "I am" or "He is" etc. (accounting for apostrophes replaced
-# earlier).
-#
 
 
 
@@ -144,13 +137,6 @@ def filterlines(lines):
     return lines
 
 
-######################################################################
-# The full process for preparing the data is:
-#
-# -  Read text file and split into lines, split lines into lines
-# -  Normalize text, filter by length and content
-# -  Make word lists from sentences in lines
-#
 
 def prepareData(datafile, max_n=-1):
     corpus, lines = readData(datafile, max_n=max_n)
@@ -185,55 +171,6 @@ def prepareData(datafile, max_n=-1):
 
 
 
-######################################################################
-# The Seq2Seq Model
-# =================
-#
-# A Recurrent Neural Network, or RNN, is a network that operates on a
-# sequence and uses its own output as input for subsequent steps.
-#
-# A `Sequence to Sequence network <http://arxiv.org/abs/1409.3215>`__, or
-# seq2seq network, or `Encoder Decoder
-# network <https://arxiv.org/pdf/1406.1078v3.pdf>`__, is a model
-# consisting of two RNNs called the encoder and decoder. The encoder reads
-# an input sequence and outputs a single vector, and the decoder reads
-# that vector to produce an output sequence.
-#
-# .. figure:: /_static/img/seq-seq-images/seq2seq.png
-#    :alt:
-#
-# Unlike sequence prediction with a single RNN, where every input
-# corresponds to an output, the seq2seq model frees us from sequence
-# length and order, which makes it ideal for translation between two
-# languages.
-#
-# Consider the sentence "Je ne suis pas le chat noir" → "I am not the
-# black cat". Most of the words in the input sentence have a direct
-# translation in the output sentence, but are in slightly different
-# orders, e.g. "chat noir" and "black cat". Because of the "ne/pas"
-# construction there is also one more word in the input sentence. It would
-# be difficult to produce a correct translation directly from the sequence
-# of input words.
-#
-# With a seq2seq model the encoder creates a single vector which, in the
-# ideal case, encodes the "meaning" of the input sequence into a single
-# vector — a single point in some N dimensional space of sentences.
-#
-
-
-######################################################################
-# The Encoder
-# -----------
-#
-# The encoder of a seq2seq network is a RNN that outputs some value for
-# every word from the input sentence. For every input word the encoder
-# outputs a vector and a hidden state, and uses the hidden state for the
-# next input word.
-#
-# .. figure:: /_static/img/seq-seq-images/encoder-network.png
-#    :alt:
-#
-#
 
 
 
@@ -260,34 +197,6 @@ class EncoderRNN(nn.Module):
         else:
             return result
 
-
-######################################################################
-# The Decoder
-# -----------
-#
-# The decoder is another RNN that takes the encoder output vector(s) and
-# outputs a sequence of words to create the translation.
-#
-
-
-######################################################################
-# Simple Decoder
-# ^^^^^^^^^^^^^^
-#
-# In the simplest seq2seq decoder we use only last output of the encoder.
-# This last output is sometimes called the *context vector* as it encodes
-# context from the entire sequence. This context vector is used as the
-# initial hidden state of the decoder.
-#
-# At every step of decoding, the decoder is given an input token and
-# hidden state. The initial input token is the start-of-string ``<SOS>``
-# token, and the first hidden state is the context vector (the encoder's
-# last hidden state).
-#
-# .. figure:: /_static/img/seq-seq-images/decoder-network.png
-#    :alt:
-#
-#
 
 class DecoderRNN(nn.Module):
     def __init__(self, hidden_size, output_size, n_layers=1):
@@ -317,27 +226,16 @@ class DecoderRNN(nn.Module):
 
 
 
-# Training
-# ========
-#
-# Preparing Training Data
-# -----------------------
-#
-# To train, for each line we will need an input tensor (indexes of the
-# words in the input sentence) and target tensor (indexes of the words in
-# the target sentence). While creating these vectors we will append the
-# EOS token to both sequences.
-#
-
 def indexesFromSentence(corpus, sentence):
     indices = []
     for word in sentence:
         index = -1
         try:
             index = corpus.word2index[word]
-        except():
+        except KeyError:
             index = UNK_INDEX
-        indices.append(index)
+        finally:
+            indices.append(index)
     return indices
 
 
@@ -374,32 +272,6 @@ def getTrainingPairs(lang, sentences):
 
 
 
-######################################################################
-# Training the Model
-# ------------------
-#
-# To train we run the input sentence through the encoder, and keep track
-# of every output and the latest hidden state. Then the decoder is given
-# the ``<SOS>`` token as its first input, and the last hidden state of the
-# encoder as its first hidden state.
-#
-# "Teacher forcing" is the concept of using the real target outputs as
-# each next input, instead of using the decoder's guess as the next input.
-# Using teacher forcing causes it to converge faster but `when the trained
-# network is exploited, it may exhibit
-# instability <http://minds.jacobs-university.de/sites/default/files/uploads/papers/ESNTutorialRev.pdf>`__.
-#
-# You can observe outputs of teacher-forced networks that read with
-# coherent grammar but wander far from the correct translation -
-# intuitively it has learned to represent the output grammar and can "pick
-# up" the meaning once the teacher tells it the first few words, but it
-# has not properly learned how to create the sentence from the translation
-# in the first place.
-#
-# Because of the freedom PyTorch's autograd gives us, we can randomly
-# choose to use teacher forcing or not with a simple if statement. Turn
-# ``teacher_forcing_ratio`` up to use more of it.
-#
 
 teacher_forcing_ratio = 0.5
 
@@ -483,17 +355,6 @@ def timeSince(since, percent):
     return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
 
 
-######################################################################
-# The whole training process looks like this:
-#
-# -  Start a timer
-# -  Initialize optimizers and criterion
-# -  Create set of training lines
-# -  Start empty losses array for plotting
-#
-# Then we call ``train`` many times and occasionally print the progress (%
-# of examples, time so far, estimated time) and average loss.
-#
 
 def trainIters(corpus, lines, encoder, decoder, n_iters, print_every=1000, plot_every=100, learning_rate=0.01, plot=True):
     start = time.time()
