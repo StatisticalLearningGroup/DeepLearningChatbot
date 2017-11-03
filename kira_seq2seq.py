@@ -1,6 +1,11 @@
 
 
 from __future__ import unicode_literals, print_function, division
+
+import matplotlib
+# Force matplotlib to not use any Xwindows backend.
+matplotlib.use('Agg')
+
 from io import open
 import unicodedata
 import re
