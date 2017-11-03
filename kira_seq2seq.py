@@ -42,7 +42,6 @@ PAD = "PAD"
 RESERVED = {SOS_INDEX: SOS, EOS_INDEX: EOS, UNK_INDEX: UNK, RMVD_INDEX: RMVD, PAD_INDEX: PAD}
 
 MAX_LENGTH = 10
-MAX_RESPONSE_LEN =20
 
 FIRST_DATA_COL = 8
 
@@ -63,15 +62,10 @@ class Corpus:
     def __init__(self):
         self.word2index = {}
         self.word2count = {}
-<<<<<<< HEAD
         self.index2word = {}
         self.word2index.update(RESERVED)
         self.index2word.update(RESERVED)
         self.n_words = len(RESERVED)
-=======
-        self.index2word = {SOS_INDEX: SOS, EOS_INDEX: EOS, UNK_INDEX: UNK, RMVD_INDEX: RMVD}
-        self.n_words = 4  # Count SOS and EOS
->>>>>>> f4501830ff4d9dd1200a9ffb696f65994d33808a
 
     def insert_data(self, w2i, i2w, n_w):
         self.word2index = w2i
@@ -176,10 +170,6 @@ def prepareData(datafile, max_n=-1):
 
 
 
-
-
-
-
 class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_size, n_layers=1):
         super(EncoderRNN, self).__init__()
@@ -187,7 +177,7 @@ class EncoderRNN(nn.Module):
         self.hidden_size = hidden_size
 
         self.embedding = nn.Embedding(input_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size)        ##Change to lstm
+        self.gru = nn.GRU(hidden_size, hidden_size)
 
     def forward(self, input, hidden):
         embedded = self.embedding(input).view(1, 1, -1)
@@ -411,7 +401,7 @@ def showPlot(points):
     return plt.gcf()
 
 
-def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_RESPONSE_LEN):
+def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_LENGTH):
     input_variable = variableFromSentence(corpus, sentence)
     input_length = input_variable.size()[0]
     encoder_hidden = encoder.initHidden()
@@ -446,7 +436,7 @@ def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_RESPONSE_LEN):
 
     return decoded_words
 
-def converse(encoder, decoder, corpus, max_length = MAX_LENGTH):    ##Add fromatted output option
+def converse(encoder, decoder, corpus, max_length = MAX_LENGTH):
     print("Enter your message:")
     end = False
     while not end:
