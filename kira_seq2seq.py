@@ -42,6 +42,7 @@ PAD = "PAD"
 RESERVED = {SOS_INDEX: SOS, EOS_INDEX: EOS, UNK_INDEX: UNK, RMVD_INDEX: RMVD, PAD_INDEX: PAD}
 
 MAX_LENGTH = 10
+MAX_RESPONSE_LENGTH = 20
 
 FIRST_DATA_COL = 8
 
@@ -273,7 +274,7 @@ teacher_forcing_ratio = 0.5
 
 
 def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion,
-          max_length=MAX_LENGTH):
+          max_length=MAX_RESPONSE_LENGTH):
     encoder_hidden = encoder.initHidden()
 
     encoder_optimizer.zero_grad()
@@ -401,7 +402,7 @@ def showPlot(points):
     return plt.gcf()
 
 
-def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_LENGTH):
+def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_RESPONSE_LENGTH):
     input_variable = variableFromSentence(corpus, sentence)
     input_length = input_variable.size()[0]
     encoder_hidden = encoder.initHidden()
