@@ -13,6 +13,10 @@ import datetime
 import os
 import time
 import math
+import numpy as np
+
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
 import torch
 import torch.nn as nn
@@ -23,12 +27,17 @@ import torch.nn.functional as F
 use_cuda = torch.cuda.is_available()
 
 
-SOS_token = 0
-EOS_token = 1
-UNK_token = 2
-RMVD_token = 3
+SOS_INDEX = 0
+EOS_INDEX = 1
+UNK_INDEX = 2
+RMVD_INDEX = 3
 
-MAX_LENGTH = 20
+UNK = "UNK"
+RMVD = "RMVD"
+EOS = "EOS"
+SOS="SOS"
+
+MAX_LENGTH = 10
 
 FIRST_DATA_COL = 8
 
@@ -39,6 +48,7 @@ DEC_FILE = "dec.pt"
 I2W_FILE = "i2w.dict"
 W2I_FILE = "w2i.dict"
 INF_FILE = "info.dat"
+FIG_FILE = "losses.png"
 
 DATA_DIR = "Current_Model/"
 
@@ -46,9 +56,9 @@ DATA_DIR = "Current_Model/"
 
 class Corpus:
     def __init__(self):
-        self.word2index = {"UNK": UNK_token}
+        self.word2index = {UNK: UNK_INDEX}
         self.word2count = {}
-        self.index2word = {SOS_token: "SOS", EOS_token: "EOS", UNK_token: "UNK", RMVD_token: "RMVD"}
+        self.index2word = {SOS_INDEX: SOS, EOS_INDEX: EOS, UNK_INDEX: UNK, RMVD_INDEX: RMVD}
         self.n_words = 2  # Count SOS and EOS
 
     def insert_data(self, w2i, i2w, n_w):
@@ -130,7 +140,7 @@ def readData(datafile, max_n=-1):
 def filterlines(lines):
     for i in range(len(lines)):
         if len(lines[i]) > MAX_LENGTH:
-            lines[i] = ["RMVD"]
+            lines[i] = [RMVD]
     return lines
 
 
@@ -165,7 +175,7 @@ def prepareData(datafile, max_n=-1):
             print("Line", i, "parsed.")
         for j in range(len(lines[i])):
             if lines[i][j] in unks:
-                lines[i][j] = "UNK"
+                lines[i][j] = UNK
                 rm_count += 1
     print(rm_count, "words removed from corpus.")
 
@@ -320,12 +330,20 @@ class DecoderRNN(nn.Module):
 #
 
 def indexesFromSentence(corpus, sentence):
-    return [corpus.word2index[word] for word in sentence]
+    indices = []
+    for word in sentence:
+        index = -1
+        try:
+            index = corpus.word2index[word]
+        except():
+            index = UNK_INDEX
+        indices.append(index)
+    return indices
 
 
 def variableFromSentence(corpus, sentence):
     indexes = indexesFromSentence(corpus, sentence)
-    indexes.append(EOS_token)
+    indexes.append(EOS_INDEX)
     result = Variable(torch.LongTensor(indexes).view(-1, 1))
     if use_cuda:
         return result.cuda()
@@ -343,7 +361,7 @@ def getTrainingPairs(lang, sentences):
     for i in range(len(sentences)):
         if i % 5000 == 0:
             print(i, "pairs collected.")
-        if not "RMVD" in sentences[i]:
+        if not RMVD in sentences[i]:
             rep = variableFromSentence(lang, sentences[i])
             if addpair == True:
                 pairs.append([msg, rep])
@@ -405,7 +423,7 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
         encoder_output, encoder_hidden = encoder(
             input_variable[ei], encoder_hidden)
 
-    decoder_input = Variable(torch.LongTensor([[SOS_token]]))
+    decoder_input = Variable(torch.LongTensor([[SOS_INDEX]]))
     decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
     decoder_hidden = encoder_hidden
@@ -432,7 +450,7 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
             decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
             loss += criterion(decoder_output, target_variable[di])
-            if ni == EOS_token:
+            if ni == EOS_INDEX:
                 break
 
     loss.backward()
@@ -477,7 +495,7 @@ def timeSince(since, percent):
 # of examples, time so far, estimated time) and average loss.
 #
 
-def trainIters(corpus, lines, encoder, decoder, n_iters, print_every=1000, plot_every=100, learning_rate=0.01):
+def trainIters(corpus, lines, encoder, decoder, n_iters, print_every=1000, plot_every=100, learning_rate=0.01, plot=True):
     start = time.time()
     plot_losses = []
     print_loss_total = 0  # Reset every print_every
@@ -511,22 +529,19 @@ def trainIters(corpus, lines, encoder, decoder, n_iters, print_every=1000, plot_
             plot_losses.append(plot_loss_avg)
             plot_loss_total = 0
 
-    #showPlot(plot_losses)
+    if plot:
+        return showPlot(plot_losses)
 
-
-
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-import numpy as np
 
 
 def showPlot(points):
-    plt.figure()
+    plt.figure(frameon=False)
     fig, ax = plt.subplots()
     # this locator puts ticks at regular intervals
     loc = ticker.MultipleLocator(base=0.2)
     ax.yaxis.set_major_locator(loc)
     plt.plot(points)
+    return plt.gcf()
 
 
 def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_LENGTH):
@@ -541,7 +556,7 @@ def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_LENGTH):
         encoder_output, encoder_hidden = encoder(input_variable[ei],
                                                  encoder_hidden)
 
-    decoder_input = Variable(torch.LongTensor([[SOS_token]]))  # SOS
+    decoder_input = Variable(torch.LongTensor([[SOS_INDEX]]))  # SOS
     decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
     decoder_hidden = encoder_hidden
@@ -553,8 +568,8 @@ def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_LENGTH):
             decoder_input, decoder_hidden)
         topv, topi = decoder_output.data.topk(1)
         ni = topi[0][0]
-        if ni == EOS_token:
-            decoded_words.append('<EOS>')
+        if ni == EOS_INDEX:
+            decoded_words.append(EOS)
             break
         else:
             decoded_words.append(corpus.index2word[ni])
@@ -573,7 +588,7 @@ def converse(encoder, decoder, corpus, max_length = MAX_LENGTH):
             end=True
         else:
             msg = normalizeString(msg).split(" ")
-            resp = evaluate(encoder, decoder, corpus , msg)
+            resp = evaluate(encoder, decoder, corpus, msg)
             print(resp)
 
 #read command line input and arguments
@@ -597,13 +612,13 @@ def run_model(datafile, hidden_size = 256, iters=100000, max_n = 100000):
     if use_cuda:
         encoder1 = encoder1.cuda()
         decoder1 = decoder1.cuda()
-    trainIters(corpus, lines, encoder1, decoder1, iters, print_every=5000)
+    plot = trainIters(corpus, lines, encoder1, decoder1, iters, print_every=5000)
 
-    save_model(encoder1, decoder1, corpus)
+    save_model(encoder1, decoder1, corpus, fig=plot)
 
 
 #save/load the model to/from a tar file
-def save_model(encoder, decoder, corpus, out_path=""):
+def save_model(encoder, decoder, corpus, out_path="", fig=None):
     print("Saving models.")
 
     cwd = os.getcwd() + '/'
@@ -613,6 +628,7 @@ def save_model(encoder, decoder, corpus, out_path=""):
     i2w_out = out_path+I2W_FILE
     w2i_out = out_path+W2I_FILE
     inf_out = out_path+INF_FILE
+    fig_out = out_path+FIG_FILE
 
     torch.save(encoder.state_dict(), enc_out)
     torch.save(decoder.state_dict(), dec_out)
@@ -628,7 +644,10 @@ def save_model(encoder, decoder, corpus, out_path=""):
     info.write(str(encoder.hidden_size)+"\n"+str(encoder.n_layers)+"\n"+str(decoder.n_layers)+"\n"+str(corpus.n_words))
     info.close()
 
-    print("Compressing models")
+    if fig != None:
+        fig.savefig(fig_out)
+
+    print("Bundling models")
     t = datetime.datetime.now()
     timestamp = str(t.day) + "_" + str(t.hour) + "_" + str(t.minute)
     tf = tarfile.open(cwd+out_path +"s2s_" + timestamp + ".tar", mode='w')
@@ -637,6 +656,8 @@ def save_model(encoder, decoder, corpus, out_path=""):
     tf.add(i2w_out)
     tf.add(w2i_out)
     tf.add(inf_out)
+    if fig != None:
+        tf.add(fig_out)
     tf.close()
 
     os.remove(enc_out)
@@ -644,6 +665,8 @@ def save_model(encoder, decoder, corpus, out_path=""):
     os.remove(i2w_out)
     os.remove(w2i_out)
     os.remove(inf_out)
+    if fig != None:
+        os.remove(fig_out)
 
     print("Finished saving models.")
 
@@ -692,7 +715,7 @@ if __name__ == '__main__':
         run_model(datafile, hidden_size=int(hidden_size), iters=int(iters), max_n=int(maxlines))
     else:
         encoder1, decoder1, corpus = load_model(model_file)
-        #converse(encoder1, decoder1, corpus)
+        converse(encoder1, decoder1, corpus)
 
 
 
