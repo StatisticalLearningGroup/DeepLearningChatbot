@@ -38,6 +38,7 @@ EOS = "EOS"
 SOS="SOS"
 
 MAX_LENGTH = 10
+MAX_RESPONSE_LEN =20
 
 FIRST_DATA_COL = 8
 
@@ -59,7 +60,7 @@ class Corpus:
         self.word2index = {UNK: UNK_INDEX}
         self.word2count = {}
         self.index2word = {SOS_INDEX: SOS, EOS_INDEX: EOS, UNK_INDEX: UNK, RMVD_INDEX: RMVD}
-        self.n_words = 2  # Count SOS and EOS
+        self.n_words = 4  # Count SOS and EOS
 
     def insert_data(self, w2i, i2w, n_w):
         self.word2index = w2i
@@ -244,7 +245,7 @@ class EncoderRNN(nn.Module):
         self.hidden_size = hidden_size
 
         self.embedding = nn.Embedding(input_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size)
+        self.gru = nn.GRU(hidden_size, hidden_size)        ##Change to lstm
 
     def forward(self, input, hidden):
         embedded = self.embedding(input).view(1, 1, -1)
@@ -544,7 +545,7 @@ def showPlot(points):
     return plt.gcf()
 
 
-def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_LENGTH):
+def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_RESPONSE_LEN):
     input_variable = variableFromSentence(corpus, sentence)
     input_length = input_variable.size()[0]
     encoder_hidden = encoder.initHidden()
@@ -579,7 +580,7 @@ def evaluate(encoder, decoder, corpus, sentence, max_length=MAX_LENGTH):
 
     return decoded_words
 
-def converse(encoder, decoder, corpus, max_length = MAX_LENGTH):
+def converse(encoder, decoder, corpus, max_length = MAX_LENGTH):    ##Add fromatted output option
     print("Enter your message:")
     end = False
     while not end:
