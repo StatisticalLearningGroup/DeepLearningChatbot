@@ -408,7 +408,7 @@ class LuongAttnDecoderRNN(nn.Module):
         return output, hidden, attn_weights
 
 def train(input_batches, input_lengths, target_batches, target_lengths, encoder, decoder, 
-    encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH):
+    encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH, clip=50.0, teacher_forcing_ratio=1.0):
     
     # Zero gradients of both optimizers
     encoder_optimizer.zero_grad()
@@ -456,6 +456,75 @@ def train(input_batches, input_lengths, target_batches, target_lengths, encoder,
     decoder_optimizer.step()
     
     return loss.data[0], ec, dc
+
+def init_model(corpus, n_layers, hidden_size, attn_model='dot', dropout=0.1, learning_rate=0.01,
+    decoder_learning_ratio=5.0):
+    encoder = EncoderRNN(corpus.n_words, hidden_size, n_layers, dropout=dropout)
+    decoder= LuongAttnDecoderRNN(attn_model, hidden_size, corpus.n_words, n_layers, dropout=dropout)
+
+    encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
+    decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate * decoder_learning_ratio)
+    criterion = nn.CrossEntropyLoss()
+
+    if USE_CUDA:
+        encoder.cuda()
+        decoder.cuda()
+
+    return encoder, decoder
+
+
+def train_epochs(corpus, lines, encoder, decoder, batch_size, n_epochs, print_every=1000, plot_every=100, plot=True):
+    ecs = []
+    dcs = []
+    eca = 0
+    dca = 0
+
+    while epoch < n_epochs:
+        epoch += 1
+
+        # Get training data for this cycle
+        input_batches, input_lengths, target_batches, target_lengths = random_batch(batch_size, corpus, lines)
+
+        # Run the train function
+        loss, ec, dc = train(
+            input_batches, input_lengths, target_batches, target_lengths,
+            encoder, decoder,
+            encoder_optimizer, decoder_optimizer, criterion
+        )
+
+        # Keep track of loss
+        print_loss_total += loss
+        plot_loss_total += loss
+        eca += ec
+        dca += dc
+
+
+        if epoch % print_every == 0:
+            print_loss_avg = print_loss_total / print_every
+            print_loss_total = 0
+            print_summary = '%s (%d %d%%) %.4f' % (
+            time_since(start, epoch / n_epochs), epoch, epoch / n_epochs * 100, print_loss_avg)
+            print(print_summary)
+
+        '''
+        if epoch % evaluate_every == 0:
+            evaluate_randomly()
+
+        if epoch % plot_every == 0:
+            plot_loss_avg = plot_loss_total / plot_every
+            plot_losses.append(plot_loss_avg)
+            plot_loss_total = 0
+
+            # TODO: Running average helper
+            ecs.append(eca / plot_every)
+            dcs.append(dca / plot_every)
+            ecs_win = 'encoder grad (%s)' % hostname
+            dcs_win = 'decoder grad (%s)' % hostname
+            vis.line(np.array(ecs), win=ecs_win, opts={'title': ecs_win})
+            vis.line(np.array(dcs), win=dcs_win, opts={'title': dcs_win})
+            eca = 0
+            dca = 0
+        '''
 
 
 
