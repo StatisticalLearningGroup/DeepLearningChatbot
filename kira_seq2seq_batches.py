@@ -13,6 +13,8 @@ import time
 import math
 import numpy as np
 
+from masked_cross_entropy import *
+
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
@@ -182,7 +184,7 @@ def getIndexPairs(corpus, sentences):
 
 # Pad a with the PAD symbol
 def pad_seq(seq, max_length):
-    seq += [PAD_token for i in range(max_length - len(seq))]
+    seq += [PAD_INDEX for i in range(max_length - len(seq))]
     return seq
 
 def random_batch(batch_size, corpus, sentences):
@@ -299,7 +301,7 @@ class Attn(nn.Module):
     def score(self, hidden, encoder_output):
         
         if self.method == 'dot':
-            energy = hidden.dot(encoder_output)
+            energy = torch.squeeze(hidden).dot(torch.squeeze(encoder_output))
             return energy
         
         elif self.method == 'general':
@@ -408,7 +410,7 @@ class LuongAttnDecoderRNN(nn.Module):
         return output, hidden, attn_weights
 
 def train(input_batches, input_lengths, target_batches, target_lengths, encoder, decoder, 
-    encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH, clip=50.0, teacher_forcing_ratio=1.0):
+    encoder_optimizer, decoder_optimizer, batch_size, max_length=MAX_LENGTH, clip=50.0, teacher_forcing_ratio=1.0):
     
     # Zero gradients of both optimizers
     encoder_optimizer.zero_grad()
@@ -419,7 +421,7 @@ def train(input_batches, input_lengths, target_batches, target_lengths, encoder,
     encoder_outputs, encoder_hidden = encoder(input_batches, input_lengths, None)
     
     # Prepare input and output variables
-    decoder_input = Variable(torch.LongTensor([SOS_token] * batch_size))
+    decoder_input = Variable(torch.LongTensor([SOS_INDEX] * batch_size))
     decoder_hidden = encoder_hidden[:decoder.n_layers] # Use last (forward) hidden state from encoder
 
     max_target_length = max(target_lengths)
@@ -457,6 +459,71 @@ def train(input_batches, input_lengths, target_batches, target_lengths, encoder,
     
     return loss.data[0], ec, dc
 
+
+def evaluate(encoder, decoder, corpus, input_seq, max_length=MAX_LENGTH):
+    input_lengths = [len(input_seq)]
+    input_seqs = [indexesFromSentence2(corpus, input_seq)]
+    input_batches = Variable(torch.LongTensor(input_seqs), volatile=True).transpose(0, 1)
+
+    if USE_CUDA:
+        input_batches = input_batches.cuda()
+
+    # Set to not-training mode to disable dropout
+    encoder.train(False)
+    decoder.train(False)
+
+    # Run through encoder
+    encoder_outputs, encoder_hidden = encoder(input_batches, input_lengths, None)
+
+    # Create starting vectors for decoder
+    decoder_input = Variable(torch.LongTensor([SOS_INDEX]), volatile=True)  # SOS
+    decoder_hidden = encoder_hidden[:decoder.n_layers]  # Use last (forward) hidden state from encoder
+
+    if USE_CUDA:
+        decoder_input = decoder_input.cuda()
+
+    # Store output words and attention states
+    decoded_words = []
+    decoder_attentions = torch.zeros(max_length + 1, max_length + 1)
+
+    # Run through decoder
+    for di in range(max_length):
+        decoder_output, decoder_hidden, decoder_attention = decoder(
+            decoder_input, decoder_hidden, encoder_outputs
+        )
+        decoder_attentions[di, :decoder_attention.size(2)] += decoder_attention.squeeze(0).squeeze(0).cpu().data
+
+        # Choose top word from output
+        topv, topi = decoder_output.data.topk(1)
+        ni = topi[0][0]
+        if ni == EOS_INDEX:
+            decoded_words.append(EOS)
+            break
+        else:
+            decoded_words.append(corpus.index2word[ni])
+
+        # Next input is chosen word
+        decoder_input = Variable(torch.LongTensor([ni]))
+        if USE_CUDA: decoder_input = decoder_input.cuda()
+
+    # Set back to training mode
+    encoder.train(True)
+    decoder.train(True)
+
+    return decoded_words#, decoder_attentions[:di + 1, :len(encoder_outputs)]
+
+def converse(encoder, decoder, corpus, max_length = MAX_LENGTH):
+    print("Enter your message:")
+    end = False
+    while not end:
+        msg = input()
+        if "exit" in msg:
+            end=True
+        else:
+            msg = normalizeString(msg).split(" ")
+            resp = evaluate(encoder, decoder, corpus, msg)
+            print(resp)
+
 def init_model(corpus, n_layers, hidden_size, attn_model='dot', dropout=0.1, learning_rate=0.01,
     decoder_learning_ratio=5.0):
     encoder = EncoderRNN(corpus.n_words, hidden_size, n_layers, dropout=dropout)
@@ -464,20 +531,24 @@ def init_model(corpus, n_layers, hidden_size, attn_model='dot', dropout=0.1, lea
 
     encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate * decoder_learning_ratio)
-    criterion = nn.CrossEntropyLoss()
 
     if USE_CUDA:
         encoder.cuda()
         decoder.cuda()
 
-    return encoder, decoder
+    return encoder, decoder, encoder_optimizer, decoder_optimizer
 
 
-def train_epochs(corpus, lines, encoder, decoder, batch_size, n_epochs, print_every=1000, plot_every=100, plot=True):
+def train_epochs(corpus, lines, encoder, decoder, encoder_optimizer, decoder_optimizer,
+                 batch_size, n_epochs, print_every=1000, plot_every=100, plot=True):
     ecs = []
     dcs = []
     eca = 0
     dca = 0
+
+    epoch=0
+    print_loss_total = 0
+    plot_loss_total = 0
 
     while epoch < n_epochs:
         epoch += 1
@@ -489,7 +560,7 @@ def train_epochs(corpus, lines, encoder, decoder, batch_size, n_epochs, print_ev
         loss, ec, dc = train(
             input_batches, input_lengths, target_batches, target_lengths,
             encoder, decoder,
-            encoder_optimizer, decoder_optimizer, criterion
+            encoder_optimizer, decoder_optimizer, batch_size
         )
 
         # Keep track of loss
@@ -527,11 +598,16 @@ def train_epochs(corpus, lines, encoder, decoder, batch_size, n_epochs, print_ev
         '''
 
 
+def train_simple_model(max_n, epochs):
+    corpus, lines = prepareData("movie_lines.txt", max_n=max_n)
+    encoder, decoder, enc_opt, dec_opt = init_model(corpus, 2, 500)
+    train_epochs(corpus, lines, encoder, decoder, enc_opt, dec_opt, 100, epochs)
+    return encoder, decoder, corpus
 
 
+encoder, decoder, corpus = train_simple_model(5000, 5)
 
-
-
+converse(encoder, decoder, corpus)
 
 
 
