@@ -54,6 +54,11 @@ FIG_FILE = "losses.png"
 
 DATA_DIR = "Current_Model/"
 
+
+#
+#   Preprocessing
+#
+
 class Corpus:
     def __init__(self):
         self.word2index = {UNK: UNK_INDEX}
@@ -218,6 +223,12 @@ def random_batch(batch_size, corpus, sentences):
         
     return input_var, input_lengths, target_var, target_lengths
 
+
+
+#
+#   Classes for Encoder, Decoder and Attention module
+#
+
 class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_size, n_layers=1, dropout=0.1):
         super(EncoderRNN, self).__init__()
@@ -239,39 +250,14 @@ class EncoderRNN(nn.Module):
         outputs = outputs[:, :, :self.hidden_size] + outputs[:, : ,self.hidden_size:] # Sum bidirectional outputs
         return outputs, hidden
 
-class DecoderRNN(nn.Module):
-    def __init__(self, hidden_size, output_size, n_layers=1):
-        super(DecoderRNN, self).__init__()
-        self.n_layers = n_layers
-        self.hidden_size = hidden_size
-
-        self.embedding = nn.Embedding(output_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size)
-        self.out = nn.Linear(hidden_size, output_size)
-        self.softmax = nn.LogSoftmax()
-
-    def forward(self, input, hidden):
-        output = self.embedding(input).view(1, 1, -1)
-        for i in range(self.n_layers):
-            output = F.relu(output)
-            output, hidden = self.gru(output, hidden)
-        output = self.softmax(self.out(output[0]))
-        return output, hidden
-
-    def initHidden(self):
-        result = Variable(torch.zeros(1, 1, self.hidden_size))
-        if use_cuda:
-            return result.cuda()
-        else:
-            return result
 
 class Attn(nn.Module):
     def __init__(self, method, hidden_size):
         super(Attn, self).__init__()
-        
+
         self.method = method
         self.hidden_size = hidden_size
-        
+
         if self.method == 'general':
             self.attn = nn.Linear(self.hidden_size, hidden_size)
 
@@ -297,33 +283,33 @@ class Attn(nn.Module):
 
         # Normalize energies to weights in range 0 to 1, resize to 1 x B x S
         return F.softmax(attn_energies).unsqueeze(1)
-    
+
     def score(self, hidden, encoder_output):
-        
+
         if self.method == 'dot':
             energy = torch.squeeze(hidden).dot(torch.squeeze(encoder_output))
             return energy
-        
+
         elif self.method == 'general':
             energy = self.attn(encoder_output)
             energy = hidden.dot(energy)
             return energy
-        
+
         elif self.method == 'concat':
             energy = self.attn(torch.cat((hidden, encoder_output), 1))
             energy = self.v.dot(energy)
             return energy
 
-class BahdanauAttnDecoderRNN(nn.Module):
+class AttnDecoderRNN(nn.Module):
     def __init__(self, hidden_size, output_size, n_layers=1, dropout_p=0.1):
-        super(BahdanauAttnDecoderRNN, self).__init__()
+        super(AttnDecoderRNN, self).__init__()
         
         # Define parameters
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.n_layers = n_layers
         self.dropout_p = dropout_p
-        self.max_length = max_length
+        self.max_length = MAX_LENGTH
         
         # Define layers
         self.embedding = nn.Embedding(output_size, hidden_size)
@@ -356,7 +342,7 @@ class BahdanauAttnDecoderRNN(nn.Module):
         # Return final output, hidden state, and attention weights (for visualization)
         return output, hidden, attn_weights
 
-
+'''
 class LuongAttnDecoderRNN(nn.Module):
     def __init__(self, attn_model, hidden_size, output_size, n_layers=1, dropout=0.1):
         super(LuongAttnDecoderRNN, self).__init__()
@@ -407,22 +393,43 @@ class LuongAttnDecoderRNN(nn.Module):
         output = self.out(concat_output)
 
         # Return final output, hidden state, and attention weights (for visualization)
-        return output, hidden, attn_weights
+        return output, hidden, attn_weights'''
 
-def train(input_batches, input_lengths, target_batches, target_lengths, encoder, decoder, 
-    encoder_optimizer, decoder_optimizer, batch_size, max_length=MAX_LENGTH, clip=50.0, teacher_forcing_ratio=1.0):
-    
+
+
+#
+#   Training models
+#
+
+#helper functions for printing time elapsed and such
+def as_minutes(s):
+    m = math.floor(s / 60)
+    s -= m * 60
+    return '%dm %ds' % (m, s)
+
+
+def time_since(since, percent):
+    now = time.time()
+    s = now - since
+    es = s / (percent)
+    rs = es - s
+    return '%s (- %s)' % (as_minutes(s), as_minutes(rs))
+
+#train one epoch
+def train(input_batches, input_lengths, target_batches, target_lengths, encoder, decoder,
+          encoder_optimizer, decoder_optimizer, batch_size, max_length=MAX_LENGTH, clip=50.0,
+          teacher_forcing_ratio=1.0):
     # Zero gradients of both optimizers
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
-    loss = 0 # Added onto for each word
+    loss = 0  # Added onto for each word
 
     # Run words through encoder
     encoder_outputs, encoder_hidden = encoder(input_batches, input_lengths, None)
-    
+
     # Prepare input and output variables
     decoder_input = Variable(torch.LongTensor([SOS_INDEX] * batch_size))
-    decoder_hidden = encoder_hidden[:decoder.n_layers] # Use last (forward) hidden state from encoder
+    decoder_hidden = encoder_hidden[:decoder.n_layers]  # Use last (forward) hidden state from encoder
 
     max_target_length = max(target_lengths)
     all_decoder_outputs = Variable(torch.zeros(max_target_length, batch_size, decoder.output_size))
@@ -439,16 +446,16 @@ def train(input_batches, input_lengths, target_batches, target_lengths, encoder,
         )
 
         all_decoder_outputs[t] = decoder_output
-        decoder_input = target_batches[t] # Next input is current target
+        decoder_input = target_batches[t]  # Next input is current target
 
     # Loss calculation and backpropagation
     loss = masked_cross_entropy(
-        all_decoder_outputs.transpose(0, 1).contiguous(), # -> batch x seq
-        target_batches.transpose(0, 1).contiguous(), # -> batch x seq
+        all_decoder_outputs.transpose(0, 1).contiguous(),  # -> batch x seq
+        target_batches.transpose(0, 1).contiguous(),  # -> batch x seq
         target_lengths
     )
     loss.backward()
-    
+
     # Clip gradient norms
     ec = torch.nn.utils.clip_grad_norm(encoder.parameters(), clip)
     dc = torch.nn.utils.clip_grad_norm(decoder.parameters(), clip)
@@ -456,9 +463,74 @@ def train(input_batches, input_lengths, target_batches, target_lengths, encoder,
     # Update parameters with optimizers
     encoder_optimizer.step()
     decoder_optimizer.step()
-    
+
     return loss.data[0], ec, dc
 
+#training handler
+def train_epochs(corpus, lines, encoder, decoder, encoder_optimizer, decoder_optimizer,
+                 batch_size, n_epochs, print_every=1000, plot_every=100, plot=True):
+    ecs = []
+    dcs = []
+    eca = 0
+    dca = 0
+
+    epoch=0
+    print_loss_total = 0
+    plot_loss_total = 0
+
+    start=time.time()
+
+    while epoch < n_epochs:
+        epoch += 1
+
+        # Get training data for this cycle
+        input_batches, input_lengths, target_batches, target_lengths = random_batch(batch_size, corpus, lines)
+
+        # Run the train function
+        loss, ec, dc = train(
+            input_batches, input_lengths, target_batches, target_lengths,
+            encoder, decoder,
+            encoder_optimizer, decoder_optimizer, batch_size
+        )
+
+        # Keep track of loss
+        print_loss_total += loss
+        plot_loss_total += loss
+        eca += ec
+        dca += dc
+
+
+        if epoch % print_every == 0:
+            print_loss_avg = print_loss_total / print_every
+            print_loss_total = 0
+            print_summary = '%s (%d %d%%) %.4f' % (
+            time_since(start, epoch / n_epochs), epoch, epoch / n_epochs * 100, print_loss_avg)
+            print(print_summary)
+
+        '''
+        if epoch % evaluate_every == 0:
+            evaluate_randomly()
+
+        if epoch % plot_every == 0:
+            plot_loss_avg = plot_loss_total / plot_every
+            plot_losses.append(plot_loss_avg)
+            plot_loss_total = 0
+
+            # TODO: Running average helper
+            ecs.append(eca / plot_every)
+            dcs.append(dca / plot_every)
+            ecs_win = 'encoder grad (%s)' % hostname
+            dcs_win = 'decoder grad (%s)' % hostname
+            vis.line(np.array(ecs), win=ecs_win, opts={'title': ecs_win})
+            vis.line(np.array(dcs), win=dcs_win, opts={'title': dcs_win})
+            eca = 0
+            dca = 0
+        '''
+
+
+#
+#   Evaluating and conversing with models
+#
 
 def evaluate(encoder, decoder, corpus, input_seq, max_length=MAX_LENGTH):
     input_lengths = [len(input_seq)]
@@ -510,24 +582,119 @@ def evaluate(encoder, decoder, corpus, input_seq, max_length=MAX_LENGTH):
     encoder.train(True)
     decoder.train(True)
 
-    return decoded_words#, decoder_attentions[:di + 1, :len(encoder_outputs)]
+    return decoded_words  # , decoder_attentions[:di + 1, :len(encoder_outputs)]
 
-def converse(encoder, decoder, corpus, max_length = MAX_LENGTH):
+def converse(encoder, decoder, corpus, max_length=MAX_LENGTH):
     print("Enter your message:")
     end = False
     while not end:
         msg = input()
         if "exit" in msg:
-            end=True
+            end = True
         else:
             msg = normalizeString(msg).split(" ")
             resp = evaluate(encoder, decoder, corpus, msg)
             print(resp)
 
-def init_model(corpus, n_layers, hidden_size, attn_model='dot', dropout=0.1, learning_rate=0.01,
-    decoder_learning_ratio=5.0):
-    encoder = EncoderRNN(corpus.n_words, hidden_size, n_layers, dropout=dropout)
-    decoder= LuongAttnDecoderRNN(attn_model, hidden_size, corpus.n_words, n_layers, dropout=dropout)
+
+#
+#   Saving and loading models
+#
+
+def save_model(encoder, decoder, corpus, out_path="", fig=None):
+    print("Saving models.")
+
+    cwd = os.getcwd() + '/'
+
+    enc_out = out_path+ENC_FILE
+    dec_out = out_path+DEC_FILE
+    i2w_out = out_path+I2W_FILE
+    w2i_out = out_path+W2I_FILE
+    inf_out = out_path+INF_FILE
+    fig_out = out_path+FIG_FILE
+
+    torch.save(encoder.state_dict(), enc_out)
+    torch.save(decoder.state_dict(), dec_out)
+
+    i2w = open(i2w_out, 'wb')
+    pickle.dump(corpus.index2word, i2w)
+    i2w.close()
+    w2i = open(w2i_out, 'wb')
+    pickle.dump(corpus.word2index, w2i)
+    w2i.close()
+
+    info = open(inf_out, 'w')
+    info.write(str(encoder.hidden_size)+"\n"+str(encoder.n_layers)+"\n"+str(decoder.n_layers)+"\n"+str(corpus.n_words))
+    info.close()
+
+    if fig != None:
+        fig.savefig(fig_out)
+
+    print("Bundling models")
+    t = datetime.datetime.now()
+    timestamp = str(t.day) + "_" + str(t.hour) + "_" + str(t.minute)
+    tf = tarfile.open(cwd+out_path +"s2s_" + timestamp + ".tar", mode='w')
+    tf.add(enc_out)
+    tf.add(dec_out)
+    tf.add(i2w_out)
+    tf.add(w2i_out)
+    tf.add(inf_out)
+    if fig != None:
+        tf.add(fig_out)
+    tf.close()
+
+    os.remove(enc_out)
+    os.remove(dec_out)
+    os.remove(i2w_out)
+    os.remove(w2i_out)
+    os.remove(inf_out)
+    if fig != None:
+        os.remove(fig_out)
+
+    print("Finished saving models.")
+
+def load_model(model_file):
+    print("Loading models.")
+    cwd = os.getcwd()+'/'
+    tf = tarfile.open(model_file)
+    tf.extractall(path=DATA_DIR)
+    info = open(cwd+DATA_DIR+INF_FILE, 'r')
+    hidden_size, e_layers, d_layers, n_words = [int(i) for i in info.readlines()]
+
+    i2w = open(cwd+DATA_DIR+I2W_FILE, 'rb')
+    w2i = open(cwd+DATA_DIR+W2I_FILE, 'rb')
+    corpus = Corpus()
+    i2w_dict = pickle.load(i2w)
+    w2i_dict = pickle.load(w2i)
+    corpus.insert_data(w2i_dict, i2w_dict, n_words)
+    w2i.close()
+    i2w.close()
+
+    encoder1 = EncoderRNN(corpus.n_words, hidden_size, n_layers=e_layers)
+    decoder1 = AttnDecoderRNN(hidden_size, corpus.n_words, n_layers=d_layers)
+    encoder1.load_state_dict(torch.load(cwd+DATA_DIR+ENC_FILE))
+    decoder1.load_state_dict(torch.load(cwd+DATA_DIR+DEC_FILE))
+    encoder1.eval()
+    decoder1.eval()
+
+    tf.close()
+
+    if use_cuda:
+        encoder1 = encoder1.cuda()
+        decoder1 = decoder1.cuda()
+
+    print("Loaded models.")
+
+    return encoder1, decoder1, corpus
+
+
+#
+#   Initializing and running models
+#
+
+def init_model(corpus, n_layers, hidden_size, dropout=0.1, learning_rate=0.01, decoder_learning_ratio=5.0):
+    encoder = EncoderRNN(corpus.n_words, hidden_size, n_layers=n_layers, dropout=dropout)
+    decoder= AttnDecoderRNN(hidden_size, corpus.n_words, n_layers=n_layers, dropout=dropout)
 
     encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate * decoder_learning_ratio)
@@ -538,78 +705,34 @@ def init_model(corpus, n_layers, hidden_size, attn_model='dot', dropout=0.1, lea
 
     return encoder, decoder, encoder_optimizer, decoder_optimizer
 
-
-def train_epochs(corpus, lines, encoder, decoder, encoder_optimizer, decoder_optimizer,
-                 batch_size, n_epochs, print_every=1000, plot_every=100, plot=True):
-    ecs = []
-    dcs = []
-    eca = 0
-    dca = 0
-
-    epoch=0
-    print_loss_total = 0
-    plot_loss_total = 0
-
-    while epoch < n_epochs:
-        epoch += 1
-
-        # Get training data for this cycle
-        input_batches, input_lengths, target_batches, target_lengths = random_batch(batch_size, corpus, lines)
-
-        # Run the train function
-        loss, ec, dc = train(
-            input_batches, input_lengths, target_batches, target_lengths,
-            encoder, decoder,
-            encoder_optimizer, decoder_optimizer, batch_size
-        )
-
-        # Keep track of loss
-        print_loss_total += loss
-        plot_loss_total += loss
-        eca += ec
-        dca += dc
+def run_model(datafile, max_lines, n_layers, hidden_size, epochs, batch_size):
+    corpus, lines = prepareData(datafile, max_n=max_lines)
+    encoder, decoder, enc_opt, dec_opt = init_model(corpus, n_layers, hidden_size)
+    train_epochs(corpus, lines, encoder, decoder, enc_opt, dec_opt, epochs, batch_size)
+    save_model(encoder, decoder, corpus)
 
 
-        if epoch % print_every == 0:
-            print_loss_avg = print_loss_total / print_every
-            print_loss_total = 0
-            print_summary = '%s (%d %d%%) %.4f' % (
-            time_since(start, epoch / n_epochs), epoch, epoch / n_epochs * 100, print_loss_avg)
-            print(print_summary)
+#
+#   Command line input
+#
 
-        '''
-        if epoch % evaluate_every == 0:
-            evaluate_randomly()
+def init_parser():
+    parser = argparse.ArgumentParser(description='Sequence to sequence chatbot model.')
+    parser.add_argument('-f', dest='datafile', action='store', default="movie_lines.txt")
+    parser.add_argument('-m', dest='maxlines', action='store', default = 100000)
+    parser.add_argument('-e', dest='epochs', action='store', default=100)
+    parser.add_argument('-hs', dest='hidden_size', action='store', default=256)
+    parser.add_argument('-bs', dest='batch_size', action='store', default=16)
+    parser.add_argument('--import', dest='model_file', action='store', default="")
 
-        if epoch % plot_every == 0:
-            plot_loss_avg = plot_loss_total / plot_every
-            plot_losses.append(plot_loss_avg)
-            plot_loss_total = 0
+    args = parser.parse_args()
+    return args.datafile, args.maxlines, args.hidden_size, args.epochs, args.batch_size, args.model_file
 
-            # TODO: Running average helper
-            ecs.append(eca / plot_every)
-            dcs.append(dca / plot_every)
-            ecs_win = 'encoder grad (%s)' % hostname
-            dcs_win = 'decoder grad (%s)' % hostname
-            vis.line(np.array(ecs), win=ecs_win, opts={'title': ecs_win})
-            vis.line(np.array(dcs), win=dcs_win, opts={'title': dcs_win})
-            eca = 0
-            dca = 0
-        '''
+if __name__ == '__main__':
+    datafile, max_lines, hidden_size, epochs, batch_size, model_file = init_parser()
 
-
-def train_simple_model(max_n, epochs):
-    corpus, lines = prepareData("movie_lines.txt", max_n=max_n)
-    encoder, decoder, enc_opt, dec_opt = init_model(corpus, 2, 500)
-    train_epochs(corpus, lines, encoder, decoder, enc_opt, dec_opt, 100, epochs)
-    return encoder, decoder, corpus
-
-
-encoder, decoder, corpus = train_simple_model(5000, 5)
-
-converse(encoder, decoder, corpus)
-
-
-
-
-
+    if model_file == "":
+        run_model(datafile, max_lines, hidden_size, epochs, batch_size)
+    else:
+        encoder, decoder, corpus = load_model(model_file)
+        converse(encoder, decoder, corpus)
