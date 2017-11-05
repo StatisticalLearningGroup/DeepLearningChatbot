@@ -694,7 +694,7 @@ def load_model(model_file):
 
 def init_model(corpus, n_layers, hidden_size, dropout=0.1, learning_rate=0.01, decoder_learning_ratio=5.0):
     encoder = EncoderRNN(corpus.n_words, hidden_size, n_layers=n_layers, dropout=dropout)
-    decoder= AttnDecoderRNN(hidden_size, corpus.n_words, n_layers=n_layers, dropout=dropout)
+    decoder= AttnDecoderRNN(hidden_size, corpus.n_words, n_layers=n_layers, dropout_p=dropout)
 
     encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate * decoder_learning_ratio)
@@ -723,16 +723,19 @@ def init_parser():
     parser.add_argument('-e', dest='epochs', action='store', default=100)
     parser.add_argument('-hs', dest='hidden_size', action='store', default=256)
     parser.add_argument('-bs', dest='batch_size', action='store', default=16)
+    parser.add_argument('-l', dest='layers', action='store', default=2)
     parser.add_argument('--import', dest='model_file', action='store', default="")
 
     args = parser.parse_args()
-    return args.datafile, args.maxlines, args.hidden_size, args.epochs, args.batch_size, args.model_file
+    return args.datafile, args.maxlines, args.hidden_size, args.layers, args.epochs, args.batch_size, args.model_file
 
 if __name__ == '__main__':
-    datafile, max_lines, hidden_size, epochs, batch_size, model_file = init_parser()
+    datafile, max_lines, hidden_size, n_layers, epochs, batch_size, model_file = init_parser()
+    max_lines, hidden_size, n_layers, epochs, batch_size = int(max_lines), int(hidden_size), int(n_layers), \
+                                                           int(epochs), int(batch_size)
 
     if model_file == "":
-        run_model(datafile, max_lines, hidden_size, epochs, batch_size)
+        run_model(datafile, max_lines, hidden_size, n_layers, epochs, batch_size)
     else:
         encoder, decoder, corpus = load_model(model_file)
         converse(encoder, decoder, corpus)
