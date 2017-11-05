@@ -250,6 +250,13 @@ class EncoderRNN(nn.Module):
         outputs = outputs[:, :, :self.hidden_size] + outputs[:, : ,self.hidden_size:] # Sum bidirectional outputs
         return outputs, hidden
 
+    def initHidden(self, batch_size):
+        result = Variable(torch.zeros(1, batch_size, self.hidden_size))
+        if use_cuda:
+            return result.cuda()
+        else:
+            return result
+
 
 class Attn(nn.Module):
     def __init__(self, method, hidden_size):
@@ -296,7 +303,8 @@ class Attn(nn.Module):
             return energy
 
         elif self.method == 'concat':
-            energy = self.attn(torch.cat((hidden, encoder_output), 1))
+            q = torch.cat((hidden, encoder_output))
+            energy = self.attn(q.transpose())
             energy = self.v.dot(energy)
             return energy
 
@@ -342,7 +350,7 @@ class AttnDecoderRNN(nn.Module):
         # Return final output, hidden state, and attention weights (for visualization)
         return output, hidden, attn_weights
 
-'''
+
 class LuongAttnDecoderRNN(nn.Module):
     def __init__(self, attn_model, hidden_size, output_size, n_layers=1, dropout=0.1):
         super(LuongAttnDecoderRNN, self).__init__()
@@ -393,7 +401,7 @@ class LuongAttnDecoderRNN(nn.Module):
         output = self.out(concat_output)
 
         # Return final output, hidden state, and attention weights (for visualization)
-        return output, hidden, attn_weights'''
+        return output, hidden, attn_weights
 
 
 
@@ -419,6 +427,8 @@ def time_since(since, percent):
 def train(input_batches, input_lengths, target_batches, target_lengths, encoder, decoder,
           encoder_optimizer, decoder_optimizer, batch_size, max_length=MAX_LENGTH, clip=50.0,
           teacher_forcing_ratio=1.0):
+
+    #encoder_hidden = encoder.initHidden(batch_size)
     # Zero gradients of both optimizers
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
@@ -430,7 +440,6 @@ def train(input_batches, input_lengths, target_batches, target_lengths, encoder,
     # Prepare input and output variables
     decoder_input = Variable(torch.LongTensor([SOS_INDEX] * batch_size))
     decoder_hidden = encoder_hidden[:decoder.n_layers]  # Use last (forward) hidden state from encoder
-
     max_target_length = max(target_lengths)
     all_decoder_outputs = Variable(torch.zeros(max_target_length, batch_size, decoder.output_size))
 
@@ -439,6 +448,8 @@ def train(input_batches, input_lengths, target_batches, target_lengths, encoder,
         decoder_input = decoder_input.cuda()
         all_decoder_outputs = all_decoder_outputs.cuda()
 
+
+    print(encoder_hidden.size(), decoder_hidden.size())
     # Run through decoder one time step at a time
     for t in range(max_target_length):
         decoder_output, decoder_hidden, decoder_attn = decoder(
@@ -624,7 +635,8 @@ def save_model(encoder, decoder, corpus, out_path="", fig=None):
     w2i.close()
 
     info = open(inf_out, 'w')
-    info.write(str(encoder.hidden_size)+"\n"+str(encoder.n_layers)+"\n"+str(decoder.n_layers)+"\n"+str(corpus.n_words))
+    info.write(str(encoder.hidden_size)+"\n"+str(encoder.n_layers)+"\n"+str(decoder.n_layers)+"\n"+str(corpus.n_words)
+               +"\n"+str(decoder.dropout))
     info.close()
 
     if fig != None:
@@ -659,7 +671,9 @@ def load_model(model_file):
     tf = tarfile.open(model_file)
     tf.extractall(path=DATA_DIR)
     info = open(cwd+DATA_DIR+INF_FILE, 'r')
-    hidden_size, e_layers, d_layers, n_words = [int(i) for i in info.readlines()]
+    lns = info.readlines()
+    hidden_size, e_layers, d_layers, n_words = [int(i) for i in lns[:4]]
+    dropout = float(lns[-1])
 
     i2w = open(cwd+DATA_DIR+I2W_FILE, 'rb')
     w2i = open(cwd+DATA_DIR+W2I_FILE, 'rb')
@@ -671,7 +685,7 @@ def load_model(model_file):
     i2w.close()
 
     encoder1 = EncoderRNN(corpus.n_words, hidden_size, n_layers=e_layers)
-    decoder1 = AttnDecoderRNN(hidden_size, corpus.n_words, n_layers=d_layers)
+    decoder1 = LuongAttnDecoderRNN('dot', hidden_size, corpus.n_words, n_layers=d_layers, dropout=dropout)
     encoder1.load_state_dict(torch.load(cwd+DATA_DIR+ENC_FILE))
     decoder1.load_state_dict(torch.load(cwd+DATA_DIR+DEC_FILE))
     encoder1.eval()
@@ -694,7 +708,7 @@ def load_model(model_file):
 
 def init_model(corpus, n_layers, hidden_size, dropout=0.1, learning_rate=0.01, decoder_learning_ratio=5.0):
     encoder = EncoderRNN(corpus.n_words, hidden_size, n_layers=n_layers, dropout=dropout)
-    decoder= AttnDecoderRNN(hidden_size, corpus.n_words, n_layers=n_layers, dropout_p=dropout)
+    decoder= LuongAttnDecoderRNN('dot', hidden_size, corpus.n_words, n_layers=n_layers, dropout=dropout)
 
     encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate * decoder_learning_ratio)
@@ -708,7 +722,7 @@ def init_model(corpus, n_layers, hidden_size, dropout=0.1, learning_rate=0.01, d
 def run_model(datafile, max_lines, n_layers, hidden_size, epochs, batch_size):
     corpus, lines = prepareData(datafile, max_n=max_lines)
     encoder, decoder, enc_opt, dec_opt = init_model(corpus, n_layers, hidden_size)
-    train_epochs(corpus, lines, encoder, decoder, enc_opt, dec_opt, epochs, batch_size)
+    train_epochs(corpus, lines, encoder, decoder, enc_opt, dec_opt, batch_size, epochs)
     save_model(encoder, decoder, corpus)
 
 
@@ -735,7 +749,7 @@ if __name__ == '__main__':
                                                            int(epochs), int(batch_size)
 
     if model_file == "":
-        run_model(datafile, max_lines, hidden_size, n_layers, epochs, batch_size)
+        run_model(datafile, max_lines, n_layers, hidden_size, epochs, batch_size)
     else:
         encoder, decoder, corpus = load_model(model_file)
         converse(encoder, decoder, corpus)
