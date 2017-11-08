@@ -114,16 +114,18 @@ def readData(datafile, max_n=-1):
     return corpus, lines
 
 def filterlines(lines):
+    count=0
     for i in range(len(lines)):
         if len(lines[i]) > MAX_LENGTH:
             lines[i] = [RMVD]
-    return lines
+            count += 1
+    return lines, count
 
 def prepareData(datafile, max_n=-1):
     corpus, lines = readData(datafile, max_n=max_n)
     print("Read %s sentence lines" % len(lines))
-    lines = filterlines(lines)
-    print("Trimmed to %s sentences" % len(lines))
+    lines, count = filterlines(lines)
+    print("Trimmed %s sentences" % count)
     print("Counting words...")
     for line in lines:
         corpus.addSentence(line)
@@ -163,7 +165,6 @@ def indexesFromSentence(corpus, sentence):
 #Needed for getIndexPairs
 def indexesFromSentence2(corpus, sentence):
     indices = indexesFromSentence(corpus, sentence)
-    indices.append(EOS_INDEX)
     return indices
 
 def getIndexPairs(corpus, sentences):
@@ -172,10 +173,10 @@ def getIndexPairs(corpus, sentences):
     msg = None
     resp = None
     addpair = False
-    print("Collecting pairs of index lists.")
+    #print("Collecting pairs of index lists.")
     for i in range(len(sentences)):
         if i % 5000 == 0:
-            print(i, "pairs collected.")
+            pass#print(i, "pairs collected.")
         if not RMVD in sentences[i]:
             rep = indexesFromSentence2(corpus, sentences[i])
             if addpair == True:
@@ -184,7 +185,7 @@ def getIndexPairs(corpus, sentences):
             addpair = True
         else:
             addpair=False
-    print("Pairs of index lists collected.")
+    #print("Pairs of index lists collected.")
     return pairs
 
 # Pad a with the PAD symbol
@@ -208,10 +209,10 @@ def random_batch(batch_size, corpus, sentences):
     input_seqs, target_seqs = zip(*seq_pairs)
     
     # For input and target sequences, get array of lengths and pad with 0s to max length
-    input_lengths = [len(s) for s in input_seqs]
-    input_padded = [pad_seq(s, max(input_lengths)) for s in input_seqs]
-    target_lengths = [len(s) for s in target_seqs]
-    target_padded = [pad_seq(s, max(target_lengths)) for s in target_seqs]
+    input_lengths = [len(s)+1 for s in input_seqs]
+    input_padded = [pad_seq(s, max(input_lengths)-1)+[EOS_INDEX] for s in input_seqs]
+    target_lengths = [len(s)+1 for s in target_seqs]
+    target_padded = [pad_seq(s, max(target_lengths)-1)+[EOS_INDEX] for s in target_seqs]
 
     # Turn padded arrays into (batch_size x max_len) tensors, transpose into (max_len x batch_size)
     input_var = Variable(torch.LongTensor(input_padded)).transpose(0, 1)
@@ -308,7 +309,7 @@ class Attn(nn.Module):
             energy = self.v.dot(energy)
             return energy
 
-class AttnDecoderRNN(nn.Module):
+'''class AttnDecoderRNN(nn.Module):
     def __init__(self, hidden_size, output_size, n_layers=1, dropout_p=0.1):
         super(AttnDecoderRNN, self).__init__()
         
@@ -348,7 +349,7 @@ class AttnDecoderRNN(nn.Module):
         output = F.log_softmax(self.out(torch.cat((output, context), 1)))
         
         # Return final output, hidden state, and attention weights (for visualization)
-        return output, hidden, attn_weights
+        return output, hidden, attn_weights'''
 
 
 class LuongAttnDecoderRNN(nn.Module):
@@ -449,7 +450,6 @@ def train(input_batches, input_lengths, target_batches, target_lengths, encoder,
         all_decoder_outputs = all_decoder_outputs.cuda()
 
 
-    print(encoder_hidden.size(), decoder_hidden.size())
     # Run through decoder one time step at a time
     for t in range(max_target_length):
         decoder_output, decoder_hidden, decoder_attn = decoder(
