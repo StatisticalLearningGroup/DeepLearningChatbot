@@ -1,7 +1,6 @@
 from __future__ import unicode_literals, print_function, division
 from io import open
 import random
-import codecs
 import argparse
 import pickle
 import tarfile
@@ -9,7 +8,7 @@ import datetime
 import os
 import time
 import math
-import numpy as np
+
 
 from chatbot_utils import *
 from masked_cross_entropy import *
@@ -129,22 +128,17 @@ class WordDict(object):
         for index in indices:
             words.append(self.index2word[index])
         return words
- 
-    
-def readData(datafile, max_n=-1):
-    print("Reading lines...")
 
-    # Read the file and split into lines
-    lines = codecs.open(datafile, encoding='utf-8', errors='ignore'). \
-        read().strip().split('\n')
-
-    if max_n > 0 and max_n < len(lines):
-        lines = lines[:max_n]
-
-    # Split every line into lines and normalize
-    lines = [normalizeString(l).split(" ")[FIRST_DATA_COL:] for l in lines]
-
-    return lines
+def import_data(datafile, max_n=-1):
+    with open(datafile, 'r') as infile:
+        lines = []
+        count = 0
+        for line in infile:
+            if max_n > 0 and count >= max_n:
+                break
+            lines.append(line.split(","))
+            count += 1
+        return lines
 
 def filterlines(lines):
     count=0
@@ -155,7 +149,8 @@ def filterlines(lines):
     return lines, count
 
 def prepareData(datafile, max_n=-1):
-    lines = readData(datafile, max_n=max_n)
+    print("Reading input...")
+    lines = import_data(datafile, max_n=max_n)
     print("Read %s sentence lines" % len(lines))
     lines, count = filterlines(lines)
     print("Trimmed %s sentences" % count)
@@ -610,7 +605,7 @@ def converse(encoder, decoder, wd, max_length=MAX_LENGTH):
         if "q" == msg:    #convert to curses or cmd
             end = True
         else:
-            msg = normalizeString(msg).split(" ")
+            msg = normalize_string(msg).split(" ")
             raw_resp = evaluate(encoder, decoder, wd, msg)
             resp = clean_resp(raw_resp, RESERVED_W2I)
             print(resp)
@@ -740,8 +735,8 @@ def run_model(datafile, max_lines, n_layers, hidden_size, epochs, batch_size):
 
 def init_parser():
     parser = argparse.ArgumentParser(description='Sequence to sequence chatbot model.')
-    parser.add_argument('-f', dest='datafile', action='store', default="movie_lines.txt")
-    parser.add_argument('-m', dest='maxlines', action='store', default = 100000)
+    parser.add_argument('-f', dest='datafile', action='store', default="data/formatted_cornell.txt")
+    parser.add_argument('-m', dest='maxlines', action='store', default = -1)
     parser.add_argument('-e', dest='epochs', action='store', default=100)
     parser.add_argument('-hs', dest='hidden_size', action='store', default=256)
     parser.add_argument('-bs', dest='batch_size', action='store', default=16)
