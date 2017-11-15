@@ -586,7 +586,7 @@ def evaluate(encoder, decoder, wd, input_seq, max_length=MAX_LENGTH):
         topv, topi = decoder_output.data.topk(1)
         ni = topi[0][0]
         if ni == EOS_INDEX:
-            decoded_words.append(EOS)
+            decoded_words.append(EOS_INDEX)
             break
         else:
             decoded_words.append(ni)
