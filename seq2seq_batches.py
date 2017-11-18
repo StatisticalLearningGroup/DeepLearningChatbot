@@ -9,7 +9,6 @@ import os
 import time
 import math
 
-
 from chatbot_utils import *
 from masked_cross_entropy import *
 
@@ -25,17 +24,7 @@ import torch.nn.functional as F
 use_cuda = torch.cuda.is_available()
 USE_CUDA = use_cuda
 
-SOS_INDEX = 0
-EOS_INDEX = 1
-UNK_INDEX = 2
-RMVD_INDEX = 3
-PAD_INDEX = 4
 
-UNK = "UNK"
-RMVD = "RMVD"
-EOS = "EOS"
-SOS = "SOS"
-PAD = "PAD"
 
 MAX_LENGTH = 10
 
@@ -52,82 +41,12 @@ FIG_FILE = "losses.png"
 
 DATA_DIR = "Current_Model/"
 
-RESERVED_I2W = {SOS_INDEX: SOS, EOS_INDEX: EOS, UNK_INDEX: UNK, RMVD_INDEX: RMVD,
-            PAD_INDEX: PAD}
-RESERVED_W2I = dict((v,k) for k,v in RESERVED_I2W.items())
+
 
 #
 #   Preprocessing
 #
-class WordDict(object):
-    def __init__(self, dicts=None):
-        if dicts == None:
-            self._init_dicts()
-        else:
-            self.word2index, self.index2word, self.word2count, self.n_words = dicts
-        
-    def _init_dicts(self):
-        self.word2index = {}
-        self.index2word = {}
-        self.word2count = {}
-        self.index2word.update(RESERVED_I2W)
-        self.word2index.update(RESERVED_W2I)
-        
-        self.n_words = len(RESERVED_I2W)    #number of words in the dictionary
 
-    def add_sentence(self, sentence):
-        for word in sentence:
-            self.add_word(word)
-
-    def add_word(self, word):
-        if not word in RESERVED_W2I:
-            if not word in self.word2index:
-                self.word2index[word] = self.n_words
-                self.word2count[word] = 1
-                self.index2word[self.n_words] = word
-                self.n_words += 1
-            else:
-                self.word2count[word] += 1
-
-    def remove_unknowns(self, cutoff):
-        #find unknown words
-        unks = []
-        for word, count in self.word2count.items():
-            if count <= cutoff:
-                unks.append(word)
-
-        #remove unknown words
-        for word in unks:
-            del self.index2word[self.word2index[word]]
-            del self.word2index[word]
-            del self.word2count[word]
-
-        #reformat dictionaries so keys get shifted to correspond to removed words
-        old_w2i = self.word2index
-        self._init_dicts()
-        new_index=1
-        for word, index in old_w2i.items():
-            self.word2index[word] = new_index
-            self.index2word[new_index] = word
-            new_index += 1
-        self.n_words = new_index
-
-        return unks
-
-    def to_indices(self, words):
-        indices = []
-        for word in words:
-            if word in self.word2index:
-                indices.append(self.word2index[word])
-            else:
-                indices.append(self.word2index[UNK])
-        return indices
-
-    def to_words(self, indices):
-        words = []
-        for index in indices:
-            words.append(self.index2word[index])
-        return words
 
 def import_data(datafile, max_n=-1):
     with open(datafile, 'r') as infile:
@@ -197,6 +116,7 @@ def pad_seq(seq, max_length):
 def random_batch(batch_size, wd, sentences):
     input_seqs = []
     target_seqs = []
+    indexes = []
     pairs = getIndexPairs(wd, sentences)
 
     # Choose random pairs
@@ -223,7 +143,7 @@ def random_batch(batch_size, wd, sentences):
         input_var = input_var.cuda()
         target_var = target_var.cuda()
         
-    return input_var, input_lengths, target_var, target_lengths
+    return input_var, input_lengths, target_var, target_lengths, indexes
 
 
 
@@ -496,7 +416,7 @@ def train_epochs(wd, lines, encoder, decoder, encoder_optimizer, decoder_optimiz
         epoch += 1
 
         # Get training data for this cycle
-        input_batches, input_lengths, target_batches, target_lengths = random_batch(batch_size, wd, lines)
+        input_batches, input_lengths, target_batches, target_lengths, index = random_batch(batch_size, wd, lines)
 
         # Run the train function
         loss, ec, dc = train(
@@ -607,8 +527,8 @@ def converse(encoder, decoder, wd, max_length=MAX_LENGTH):
         else:
             msg = normalize_string(msg).split(" ")
             raw_resp = evaluate(encoder, decoder, wd, msg)
-            resp = clean_resp(raw_resp, RESERVED_W2I)
-            print(resp)
+            #resp = clean_resp(raw_resp, RESERVED_W2I)
+            print(raw_resp)
 
 
 
@@ -709,7 +629,7 @@ def load_model(model_file):
 #   Initializing and running models
 #
 
-def init_model(wd, n_layers, hidden_size, dropout=0.1, learning_rate=0.01, decoder_learning_ratio=5.0):
+def init_model(wd, n_layers, hidden_size, dropout=0.1, learning_rate=0.05, decoder_learning_ratio=5.0):
     encoder = EncoderRNN(wd.n_words, hidden_size, n_layers=n_layers, dropout=dropout)
     decoder= LuongAttnDecoderRNN('dot', hidden_size, wd.n_words, n_layers=n_layers, dropout=dropout)
 
@@ -717,8 +637,8 @@ def init_model(wd, n_layers, hidden_size, dropout=0.1, learning_rate=0.01, decod
     decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate * decoder_learning_ratio)
 
     if USE_CUDA:
-        encoder.cuda()
-        decoder.cuda()
+        encoder = encoder.cuda()
+        decoder = decoder.cuda()
 
     return encoder, decoder, encoder_optimizer, decoder_optimizer
 
@@ -737,7 +657,7 @@ def init_parser():
     parser = argparse.ArgumentParser(description='Sequence to sequence chatbot model.')
     parser.add_argument('-f', dest='datafile', action='store', default="data/formatted_cornell.txt")
     parser.add_argument('-m', dest='maxlines', action='store', default = -1)
-    parser.add_argument('-e', dest='epochs', action='store', default=100)
+    parser.add_argument('-e', dest='epochs', action='store', default=1)
     parser.add_argument('-hs', dest='hidden_size', action='store', default=256)
     parser.add_argument('-bs', dest='batch_size', action='store', default=16)
     parser.add_argument('-l', dest='layers', action='store', default=2)
